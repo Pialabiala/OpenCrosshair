@@ -4,7 +4,7 @@ mod presets;
 mod settings;
 mod widgets;
 
-use crate::config::{Crosshair, Mode, Settings, Theme};
+use crate::config::{Crosshair, Hotkey, Mode, Settings, Theme};
 use crate::overlay::{self, Status, VISIBLE};
 use crate::{apps, install};
 use eframe::egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
@@ -162,8 +162,8 @@ const SCROLL_GAP: f32 = 24.0;
 // leaves an empty strip between the grid and the preview.
 const CANVAS_COLUMN: f32 = 540.0;
 // Label column of the editor grids, so their sliders start at the same x.
-// Just wider than the longest label ("Ring width"), so the cards still fit the narrowest window.
-const LABEL_COL: f32 = 72.0;
+// Just wider than the longest Chinese label ("不透明度" / "圆环宽度"), so the cards fit cleanly.
+const LABEL_COL: f32 = 76.0;
 // Logo and pages take about 240 pt and the status block about 140, plus a gap. Shorter than this
 // and the status follows the pages instead of sitting at the bottom.
 const SIDEBAR_HEIGHT: f32 = 400.0;
@@ -212,6 +212,7 @@ pub fn run(
             cc.egui_ctx.set_theme(theme_preference(local.theme));
             overlay::adopt_settings_window();
             let _ = CTX.set(cc.egui_ctx.clone());
+            let last_overlay_rev = overlay::settings_rev();
             Ok(Box::new(App {
                 shared,
                 local,
@@ -231,14 +232,17 @@ pub fn run(
                 last_cell: None,
                 undo: Vec::new(),
                 confirm_delete: None,
+                confirm_delete_crosshair: None,
                 renaming: None,
+                renaming_crosshair: None,
                 image_error: None,
                 preset_status: None,
                 open_game: None,
                 removed_game: None,
                 dirty: false,
                 caption: None,
-                extra_fonts: [false; 2],
+                extra_fonts: [false; 1],
+                last_overlay_rev,
             }))
         }),
     )
@@ -378,19 +382,8 @@ fn system_font(file: &str) -> Option<Arc<egui::FontData>> {
 /// characters need it.
 type Fallback = (&'static str, &'static str, fn(char) -> bool);
 
-/// Loaded the first time a name uses one of its characters: they're large (msyh.ttc is about
-/// 20 MB) and most people never need them.
-const EXTRA_FONTS: [Fallback; 2] = [
-    // Chinese and Japanese
-    ("yahei", "msyh.ttc", |c| {
-        matches!(
-            c,
-            '\u{2E80}'..='\u{312F}'
-                | '\u{3190}'..='\u{9FFF}'
-                | '\u{F900}'..='\u{FAFF}'
-                | '\u{FF00}'..='\u{FFEF}'
-        )
-    }),
+/// Loaded the first time a name uses one of its characters: Korean font is loaded on demand.
+const EXTRA_FONTS: [Fallback; 1] = [
     // Korean
     ("malgun", "malgun.ttf", |c| {
         matches!(
@@ -410,17 +403,21 @@ fn fonts() -> egui::FontDefinitions {
     fonts.families.insert(semibold(), fallbacks);
     for (key, file, families) in [
         ("segoe", "segoeui.ttf", vec![Proportional]),
+        ("yahei", "msyh.ttc", vec![Proportional, semibold()]),
         ("segoe-semibold", "seguisb.ttf", vec![semibold()]),
+        ("yahei-bold", "msyhbd.ttc", vec![semibold()]),
         ("consolas", "consola.ttf", vec![Monospace]),
     ] {
         if let Some(data) = system_font(file) {
             fonts.font_data.insert(key.into(), data);
             for family in families {
-                fonts
-                    .families
-                    .get_mut(&family)
-                    .unwrap()
-                    .insert(0, key.into());
+                let list = fonts.families.get_mut(&family).unwrap();
+                if key.starts_with("yahei") {
+                    let pos = usize::from(!list.is_empty());
+                    list.insert(pos, key.into());
+                } else {
+                    list.insert(0, key.into());
+                }
             }
         }
     }
@@ -471,11 +468,21 @@ enum Page {
     Settings,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum ListenTarget {
+    Toggle,
+    Menu,
+    PrevCrosshair,
+    NextCrosshair,
+    Crosshair(usize),
+    Preset(String),
+}
+
 struct App {
     shared: Arc<Mutex<Settings>>,
     local: Settings,
     page: Page,
-    listening: Option<usize>, // 0 = toggle key, 1 = menu key
+    listening: Option<ListenTarget>,
     brush: [u8; 4],
     mirror_x: bool,
     mirror_y: bool,
@@ -495,8 +502,12 @@ struct App {
     undo: Vec<(u32, Vec<[u8; 4]>)>,
     /// Preset whose delete button was clicked once; a second click deletes it.
     confirm_delete: Option<String>,
+    /// Independent crosshair whose delete button was clicked once; a second click deletes it.
+    confirm_delete_crosshair: Option<usize>,
     /// Preset being renamed: its current name, and the name typed so far.
     renaming: Option<(String, String)>,
+    /// Independent crosshair being renamed: its index, and the name typed so far.
+    renaming_crosshair: Option<(usize, String)>,
     /// Why the last picture couldn't be used, shown on the Image card.
     image_error: Option<String>,
     /// Result of the last preset export or import, shown on the Presets page.
@@ -509,7 +520,9 @@ struct App {
     /// Theme last applied to the native title bar; None until the window has been found.
     caption: Option<bool>,
     /// Which of EXTRA_FONTS have been tried, so each is looked for at most once.
-    extra_fonts: [bool; 2],
+    extra_fonts: [bool; 1],
+    /// Revision of settings last pulled from the overlay thread (e.g. hotkey switching).
+    last_overlay_rev: u64,
 }
 
 impl eframe::App for App {
@@ -537,7 +550,24 @@ impl eframe::App for App {
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             overlay::hide_settings();
         }
+        // Sync hotkey-driven switches from the overlay thread before diffing `before`.
+        let rev = overlay::settings_rev();
+        if rev != self.last_overlay_rev {
+            self.local = self.shared.lock().unwrap().clone();
+            self.last_overlay_rev = rev;
+            self.undo.clear();
+            self.last_cell = None;
+        }
         let before = self.local.clone();
+        if let Some(target) = self.listening.clone() {
+            ui.ctx().request_repaint(); // keep polling while waiting for a key
+            if let Some(hk) = overlay::capture_key() {
+                if let Some(hk) = hk {
+                    self.set_hotkey(&target, hk);
+                }
+                self.listening = None;
+            }
+        }
         // Drop a picture anywhere on the window to use it as the crosshair.
         let dropped = ui
             .ctx()
@@ -556,10 +586,12 @@ impl eframe::App for App {
                 .presets
                 .keys()
                 .map(String::as_str)
+                .chain(self.local.crosshairs.iter().map(|c| c.name.as_str()))
                 .chain(self.local.games.iter().map(|g| g.name.as_str()))
                 .chain(self.apps.values().map(|a| a.name.as_str()))
                 .chain([self.preset_name.as_str(), self.game_input.as_str()])
-                .chain(self.renaming.as_ref().map(|(_, new)| new.as_str()));
+                .chain(self.renaming.as_ref().map(|(_, new)| new.as_str()))
+                .chain(self.renaming_crosshair.as_ref().map(|(_, new)| new.as_str()));
             if !shown.flat_map(str::chars).any(*needs) {
                 continue;
             }
@@ -609,7 +641,7 @@ impl eframe::App for App {
                 let sticky =
                     self.page == Page::Crosshair && !side && ui.available_height() >= 600.0;
                 let mut column = (full - SCROLL_GAP).min(COLUMN);
-                if side && self.local.crosshair.mode == Mode::Pixels {
+                if side && self.local.active_crosshair().mode == Mode::Pixels {
                     column = column.min(CANVAS_COLUMN);
                 }
                 let group = column + SCROLL_GAP + if side { GUTTER + PREVIEW_COLUMN } else { 0.0 };
@@ -672,6 +704,7 @@ impl eframe::App for App {
                 });
             });
 
+        self.local.sync_active();
         if self.local != before {
             *self.shared.lock().unwrap() = self.local.clone();
             overlay::refresh();
@@ -725,18 +758,102 @@ impl App {
         });
         ui.add_space(22.0);
         for (p, ic, name) in [
-            (Page::Crosshair, icon::CROSSHAIR_SIMPLE, "Crosshair"),
-            (Page::Games, icon::GAME_CONTROLLER, "Games"),
-            (Page::Presets, icon::BOOKMARKS_SIMPLE, "Presets"),
-            (Page::Settings, icon::GEAR_SIX, "Settings"),
+            (Page::Crosshair, icon::CROSSHAIR_SIMPLE, "准星"),
+            (Page::Games, icon::GAME_CONTROLLER, "游戏"),
+            (Page::Presets, icon::BOOKMARKS_SIMPLE, "预设"),
+            (Page::Settings, icon::GEAR_SIX, "设置"),
         ] {
             if nav_item(ui, ic, name, self.page == p).clicked() {
                 self.page = p;
                 self.listening = None;
                 self.confirm_delete = None;
+                self.confirm_delete_crosshair = None;
                 self.renaming = None;
+                self.renaming_crosshair = None;
                 self.removed_game = None;
             }
+        }
+    }
+
+    pub(super) fn get_hotkey(&self, target: &ListenTarget) -> Hotkey {
+        match target {
+            ListenTarget::Toggle => self.local.toggle_key,
+            ListenTarget::Menu => self.local.menu_key,
+            ListenTarget::PrevCrosshair => self.local.prev_crosshair_key,
+            ListenTarget::NextCrosshair => self.local.next_crosshair_key,
+            ListenTarget::Crosshair(i) => self
+                .local
+                .crosshairs
+                .get(*i)
+                .map_or_else(Hotkey::default, |s| s.hotkey),
+            ListenTarget::Preset(name) => self
+                .local
+                .preset_hotkeys
+                .get(name)
+                .copied()
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(super) fn set_hotkey(&mut self, target: &ListenTarget, hk: Hotkey) {
+        match target {
+            ListenTarget::Toggle => self.local.toggle_key = hk,
+            ListenTarget::Menu => self.local.menu_key = hk,
+            ListenTarget::PrevCrosshair => self.local.prev_crosshair_key = hk,
+            ListenTarget::NextCrosshair => self.local.next_crosshair_key = hk,
+            ListenTarget::Crosshair(i) => {
+                if let Some(slot) = self.local.crosshairs.get_mut(*i) {
+                    slot.hotkey = hk;
+                }
+            }
+            ListenTarget::Preset(name) => {
+                if hk.vk == 0 {
+                    self.local.preset_hotkeys.remove(name);
+                } else {
+                    self.local.preset_hotkeys.insert(name.clone(), hk);
+                }
+            }
+        }
+    }
+
+    pub(super) fn is_duplicate_hotkey(&self, target: &ListenTarget, hk: Hotkey) -> bool {
+        if hk.vk == 0 {
+            return false;
+        }
+        let mut count = 0usize;
+        for (t, k) in [
+            (ListenTarget::Toggle, self.local.toggle_key),
+            (ListenTarget::Menu, self.local.menu_key),
+            (ListenTarget::PrevCrosshair, self.local.prev_crosshair_key),
+            (ListenTarget::NextCrosshair, self.local.next_crosshair_key),
+        ] {
+            if k == hk && t != *target {
+                count += 1;
+            }
+        }
+        for (i, slot) in self.local.crosshairs.iter().enumerate() {
+            if slot.hotkey == hk && *target != ListenTarget::Crosshair(i) {
+                count += 1;
+            }
+        }
+        for (name, &k) in &self.local.preset_hotkeys {
+            if k == hk && *target != ListenTarget::Preset(name.clone()) {
+                count += 1;
+            }
+        }
+        count > 0
+    }
+
+    pub(super) fn hotkey_issue(&self, target: &ListenTarget, hk: Hotkey) -> Option<&'static str> {
+        if hk.vk == 0 {
+            return None;
+        }
+        if self.is_duplicate_hotkey(target, hk) {
+            Some("快捷键冲突（已被其他功能使用）")
+        } else if overlay::is_hotkey_failed(hk) {
+            Some("该快捷键已被其他程序占用")
+        } else {
+            None
         }
     }
 
@@ -748,31 +865,31 @@ impl App {
             name.unwrap_or_else(|| apps::display_name(exe, "", ""))
         };
         let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
-            Status::InGame(exe) => ("In game", pal().green, game_name(&exe)),
+            Status::InGame(exe) => ("游戏中", pal().green, game_name(&exe)),
             Status::Fullscreen(exe) => (
-                "Fullscreen",
+                "全屏模式",
                 pal().yellow,
-                format!("{}: can't see it? Use borderless.", game_name(&exe)),
+                format!("{}：看不到准星？请改用无边框窗口。", game_name(&exe)),
             ),
             Status::Waiting => (
-                "Waiting",
+                "等待中",
                 pal().gray,
-                "Shows when one of your games is in front".to_string(),
+                "当你的游戏窗口处于前台时自动显示".to_string(),
             ),
             // With no toggle key there's nothing to press, so point at the switch instead.
             Status::Hidden => (
-                "Hidden",
+                "已隐藏",
                 pal().gray,
                 if self.local.toggle_key.vk == 0 {
-                    "Turn it back on with the switch above".to_string()
+                    "打开上方开关以重新显示".to_string()
                 } else {
-                    format!("Press {toggle} to show it")
+                    format!("按 {toggle} 显示准星")
                 },
             ),
             Status::Everywhere => (
-                "Everywhere",
+                "全局显示",
                 pal().blue,
-                "Showing over every app".to_string(),
+                "当前在所有窗口上方显示".to_string(),
             ),
         };
         // Switch first, left to right: a right_to_left layout (or egui::Sides) inside the
@@ -780,12 +897,12 @@ impl App {
         let switch_row = |ui: &mut egui::Ui| {
             let mut on = VISIBLE.load(Ordering::Relaxed);
             ui.horizontal(|ui| {
-                let hint = format!("Toggle: {toggle}");
+                let hint = format!("快捷键：{toggle}");
                 if switch(ui, &mut on).on_hover_text(hint).changed() {
                     VISIBLE.store(on, Ordering::Relaxed);
                     overlay::refresh();
                 }
-                ui.label(RichText::new("Show crosshair").semi());
+                ui.label(RichText::new("显示准星").semi());
             });
         };
         // Bottom-up adds the first item at the bottom, so the pinned order is the reverse.
@@ -814,9 +931,7 @@ mod tests {
                 .filter(|&i| (EXTRA_FONTS[i].2)(c))
                 .collect()
         };
-        assert_eq!(matches('準'), vec![0]);
-        assert_eq!(matches('原'), vec![0]);
-        assert_eq!(matches('한'), vec![1]);
+        assert_eq!(matches('한'), vec![0]);
         assert!(matches('A').is_empty());
         assert!(matches('خ').is_empty());
     }

@@ -183,11 +183,11 @@ pub fn install(silent: bool) {
         }
     };
     let Some(dir) = install_dir() else {
-        return tell("Couldn't find your AppData folder.", true);
+        return tell("找不到 AppData 文件夹。", true);
     };
     let target = dir.join("OpenCrosshair.exe");
     let prompt = format!(
-        "Install OpenCrosshair {VERSION}?\n\nIt installs just for your account, so no admin rights are needed:\n{}",
+        "是否安装 OpenCrosshair {VERSION}？\n\n程序仅安装在当前用户目录下，无需管理员权限：\n{}",
         dir.display()
     );
     if !silent && !ask(&prompt) {
@@ -197,16 +197,13 @@ pub fn install(silent: bool) {
     // An older copy may be running; ask it to quit so its exe can be replaced.
     overlay::signal_running(true);
     let Some(lock) = Instance::acquire(10_000) else {
-        return tell(
-            "OpenCrosshair is still running. Close it and run the installer again.",
-            true,
-        );
+        return tell("OpenCrosshair 仍在运行，请先关闭后再运行安装程序。", true);
     };
     let copied = std::fs::create_dir_all(&dir)
         .and_then(|_| std::fs::copy(std::env::current_exe()?, &target));
     if let Err(e) = copied {
         return tell(
-            &format!("Couldn't copy OpenCrosshair to {}:\n{e}", dir.display()),
+            &format!("无法将 OpenCrosshair 复制到 {}：\n{e}", dir.display()),
             true,
         );
     }
@@ -229,7 +226,7 @@ fn create_shortcut(link: &Path, target: &Path) -> windows::core::Result<()> {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
         shell_link.SetPath(&HSTRING::from(target))?;
-        shell_link.SetDescription(w!("Crosshair overlay for games"))?;
+        shell_link.SetDescription(w!("游戏准星悬浮窗工具"))?;
         shell_link
             .cast::<IPersistFile>()?
             .Save(&HSTRING::from(link), true)
@@ -268,7 +265,7 @@ fn register_uninstall(exe: &Path) {
 pub fn uninstall(silent: bool) {
     if !silent
         && !ask(
-            "Uninstall OpenCrosshair?\n\nYour crosshairs and settings are kept in %APPDATA%\\OpenCrosshair in case you come back.",
+            "确定要卸载 OpenCrosshair 吗？\n\n你的准星配置与设置文件仍保留在 %APPDATA%\\OpenCrosshair 中，以便日后恢复。",
         )
     {
         return;
@@ -284,7 +281,7 @@ pub fn uninstall(silent: bool) {
         let _ = RegDeleteTreeW(HKEY_CURRENT_USER, UNINSTALL_KEY);
     }
     if !silent {
-        tell("OpenCrosshair has been removed.", false);
+        tell("OpenCrosshair 已卸载。", false);
     }
     // A running exe can't delete itself, so leave the folder to cmd once we've exited.
     // Only ever our own install folder, never wherever a portable copy happens to live.

@@ -59,10 +59,10 @@ impl AimButton {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Right => "Right mouse button",
-            Self::Middle => "Middle mouse button",
-            Self::Back => "Mouse back button",
-            Self::Forward => "Mouse forward button",
+            Self::Right => "鼠标右键",
+            Self::Middle => "鼠标中键",
+            Self::Back => "鼠标侧键（后退）",
+            Self::Forward => "鼠标侧键（前进）",
         }
     }
 }
@@ -187,19 +187,43 @@ impl Crosshair {
 }
 
 /// Virtual-key code + RegisterHotKey modifier bits (1=Alt, 2=Ctrl, 4=Shift).
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct Hotkey {
     pub vk: u32,
     pub mods: u32,
+}
+
+/// An independent crosshair entry with its own style, independent X/Y offset, and hotkey.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CrosshairSlot {
+    pub name: String,
+    pub crosshair: Crosshair,
+    pub hotkey: Hotkey,
+}
+
+impl Default for CrosshairSlot {
+    fn default() -> Self {
+        Self {
+            name: "准星 1".into(),
+            crosshair: Crosshair::default(),
+            hotkey: Hotkey::default(),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub crosshair: Crosshair,
+    pub crosshairs: Vec<CrosshairSlot>,
+    pub active_crosshair: usize,
     pub toggle_key: Hotkey,
     pub menu_key: Hotkey,
+    pub prev_crosshair_key: Hotkey,
+    pub next_crosshair_key: Hotkey,
     pub presets: BTreeMap<String, Crosshair>,
+    pub preset_hotkeys: BTreeMap<String, Hotkey>,
     /// Only show the crosshair while one of `games` is the focused window.
     pub only_games: bool,
     pub games: Vec<Game>,
@@ -226,9 +250,14 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             crosshair: Crosshair::default(),
+            crosshairs: Vec::new(),
+            active_crosshair: 0,
             toggle_key: Hotkey { vk: 0x77, mods: 0 }, // F8
             menu_key: Hotkey { vk: 0x78, mods: 0 },   // F9
+            prev_crosshair_key: Hotkey::default(),
+            next_crosshair_key: Hotkey::default(),
             presets: BTreeMap::new(),
+            preset_hotkeys: BTreeMap::new(),
             only_games: false,
             games: Vec::new(),
             auto_update: true,
@@ -272,7 +301,7 @@ pub fn import_image(src: &Path) -> std::io::Result<String> {
 /// The same as `import_image`, for bytes that didn't come from a file (e.g. a shared preset).
 pub fn import_bytes(bytes: Vec<u8>, ext: &str) -> std::io::Result<String> {
     if bytes.len() > 20 << 20 {
-        return Err(std::io::Error::other("that file is over 20 MB"));
+        return Err(std::io::Error::other("文件大小超过 20 MB"));
     }
     let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ b as u64).wrapping_mul(0x100_0000_01b3) // FNV-1a
@@ -291,6 +320,163 @@ fn retarget_aim(aim: &mut Aim, old: &str, new: Option<&str>) {
 }
 
 impl Settings {
+    /// Ensure at least one independent crosshair exists and all fields are valid.
+    pub fn normalize(&mut self) {
+        self.crosshair.sanitize();
+        if self.crosshairs.is_empty() {
+            self.crosshairs.push(CrosshairSlot {
+                name: "准星 1".into(),
+                crosshair: self.crosshair.clone(),
+                hotkey: Hotkey::default(),
+            });
+        }
+        for (i, slot) in self.crosshairs.iter_mut().enumerate() {
+            slot.crosshair.sanitize();
+            let trimmed: String = slot.name.trim().chars().take(MAX_NAME).collect();
+            slot.name = if trimmed.is_empty() {
+                format!("准星 {}", i + 1)
+            } else {
+                trimmed
+            };
+        }
+        if self.active_crosshair >= self.crosshairs.len() {
+            self.active_crosshair = 0;
+        }
+        self.sync_active();
+        self.presets.values_mut().for_each(Crosshair::sanitize);
+        self.preset_hotkeys
+            .retain(|k, hk| self.presets.contains_key(k) && hk.vk != 0);
+        for g in &mut self.games {
+            g.exe = g.exe.trim().to_lowercase();
+        }
+    }
+
+    pub fn active_crosshair(&self) -> &Crosshair {
+        self.crosshairs
+            .get(self.active_crosshair)
+            .or_else(|| self.crosshairs.first())
+            .map_or(&self.crosshair, |slot| &slot.crosshair)
+    }
+
+    pub fn active_crosshair_mut(&mut self) -> &mut Crosshair {
+        if self.crosshairs.is_empty() {
+            self.crosshairs.push(CrosshairSlot {
+                name: "准星 1".into(),
+                crosshair: self.crosshair.clone(),
+                hotkey: Hotkey::default(),
+            });
+            self.active_crosshair = 0;
+        }
+        if self.active_crosshair >= self.crosshairs.len() {
+            self.active_crosshair = 0;
+        }
+        &mut self.crosshairs[self.active_crosshair].crosshair
+    }
+
+    /// Keep the legacy `crosshair` field mirrored with the currently active independent crosshair.
+    pub fn sync_active(&mut self) {
+        if let Some(slot) = self.crosshairs.get(self.active_crosshair) {
+            self.crosshair = slot.crosshair.clone();
+        } else if let Some(slot) = self.crosshairs.first() {
+            self.active_crosshair = 0;
+            self.crosshair = slot.crosshair.clone();
+        }
+    }
+
+    pub fn set_active_crosshair(&mut self, idx: usize) -> bool {
+        if idx < self.crosshairs.len() {
+            self.active_crosshair = idx;
+            self.sync_active();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn next_crosshair_name(&self) -> String {
+        let mut n = self.crosshairs.len() + 1;
+        loop {
+            let candidate = format!("准星 {n}");
+            if !self.crosshairs.iter().any(|s| s.name == candidate) {
+                return candidate;
+            }
+            n += 1;
+        }
+    }
+
+    /// Create a brand-new independent crosshair with its own default (0, 0) X/Y position.
+    pub fn add_crosshair(&mut self, mode: Mode) -> usize {
+        self.active_crosshair_mut();
+        let name = self.next_crosshair_name();
+        let crosshair = Crosshair {
+            mode,
+            ..Default::default()
+        };
+        self.crosshairs.push(CrosshairSlot {
+            name,
+            crosshair,
+            hotkey: Hotkey::default(),
+        });
+        self.active_crosshair = self.crosshairs.len() - 1;
+        self.sync_active();
+        self.active_crosshair
+    }
+
+    /// Duplicate an independent crosshair (with its own copy of settings and X/Y position).
+    pub fn duplicate_crosshair(&mut self, idx: usize) -> usize {
+        self.active_crosshair_mut();
+        let Some(src) = self.crosshairs.get(idx).cloned() else {
+            return self.active_crosshair;
+        };
+        let base = src.name.trim();
+        let mut copy_name = format!("{base} (副本)");
+        let mut n = 2;
+        while self.crosshairs.iter().any(|s| s.name == copy_name) {
+            copy_name = format!("{base} (副本 {n})");
+            n += 1;
+        }
+        let copy_name: String = copy_name.chars().take(MAX_NAME).collect();
+        let insert_at = idx + 1;
+        self.crosshairs.insert(
+            insert_at,
+            CrosshairSlot {
+                name: copy_name,
+                crosshair: src.crosshair,
+                hotkey: Hotkey::default(),
+            },
+        );
+        self.active_crosshair = insert_at;
+        self.sync_active();
+        insert_at
+    }
+
+    /// Delete an independent crosshair when more than one exists.
+    pub fn delete_crosshair(&mut self, idx: usize) -> bool {
+        if self.crosshairs.len() <= 1 || idx >= self.crosshairs.len() {
+            return false;
+        }
+        self.crosshairs.remove(idx);
+        if self.active_crosshair >= self.crosshairs.len() {
+            self.active_crosshair = self.crosshairs.len() - 1;
+        } else if idx < self.active_crosshair {
+            self.active_crosshair -= 1;
+        }
+        self.sync_active();
+        true
+    }
+
+    pub fn rename_crosshair(&mut self, idx: usize, new: &str) -> Result<(), String> {
+        let trimmed: String = new.trim().chars().take(MAX_NAME).collect();
+        if trimmed.is_empty() {
+            return Err("请输入名称。".into());
+        }
+        let Some(slot) = self.crosshairs.get_mut(idx) else {
+            return Err("找不到该准星。".into());
+        };
+        slot.name = trimmed;
+        Ok(())
+    }
+
     /// The aiming rule in effect for a game: its own if it has one, otherwise the default.
     pub fn aim_rule_for(&self, game: Option<&Game>) -> AimRule {
         game.and_then(|g| g.aim.clone()).unwrap_or_else(|| AimRule {
@@ -313,11 +499,7 @@ impl Settings {
             }),
             Err(_) => Settings::default(),
         };
-        s.crosshair.sanitize();
-        s.presets.values_mut().for_each(Crosshair::sanitize);
-        for g in &mut s.games {
-            g.exe = g.exe.trim().to_lowercase();
-        }
+        s.normalize();
         s
     }
 
@@ -335,18 +517,21 @@ impl Settings {
     pub fn rename_preset(&mut self, old: &str, new: &str) -> Result<(), String> {
         let new = new.trim();
         if new.is_empty() {
-            return Err("Give it a name.".into());
+            return Err("请输入名称。".into());
         }
         if new == old {
             return Ok(());
         }
         if self.presets.contains_key(new) {
-            return Err(format!("There's already a preset called {new}."));
+            return Err(format!("已存在名为“{new}”的预设。"));
         }
         let Some(crosshair) = self.presets.remove(old) else {
-            return Err(format!("There's no preset called {old}."));
+            return Err(format!("找不到名为“{old}”的预设。"));
         };
         self.presets.insert(new.into(), crosshair);
+        if let Some(hk) = self.preset_hotkeys.remove(old) {
+            self.preset_hotkeys.insert(new.into(), hk);
+        }
         retarget_aim(&mut self.aim, old, Some(new));
         for g in &mut self.games {
             if g.preset == old {
@@ -362,6 +547,7 @@ impl Settings {
     /// Delete a preset. Anything that used it goes back to the current crosshair, or to Keep.
     pub fn delete_preset(&mut self, name: &str) {
         self.presets.remove(name);
+        self.preset_hotkeys.remove(name);
         retarget_aim(&mut self.aim, name, None);
         for g in &mut self.games {
             if g.preset == name {
@@ -466,10 +652,53 @@ mod tests {
         // A name that's taken or empty is refused, and nothing moves.
         assert_eq!(
             s.rename_preset("Pip", "Cross"),
-            Err("There's already a preset called Cross.".into())
+            Err("已存在名为“Cross”的预设。".into())
         );
-        assert_eq!(s.rename_preset("Pip", "   "), Err("Give it a name.".into()));
+        assert_eq!(s.rename_preset("Pip", "   "), Err("请输入名称。".into()));
         assert!(s.presets.contains_key("Pip") && s.games[0].preset == "Pip");
+    }
+
+    #[test]
+    fn independent_crosshairs_keep_separate_positions() {
+        let mut s = Settings::default();
+        s.normalize();
+        s.active_crosshair_mut().offset_x = 120;
+        s.active_crosshair_mut().offset_y = -45;
+        s.sync_active();
+
+        let second = s.add_crosshair(Mode::Image);
+        assert_eq!(second, 1);
+        assert_eq!(
+            (s.active_crosshair().offset_x, s.active_crosshair().offset_y),
+            (0, 0)
+        );
+        s.active_crosshair_mut().offset_x = -80;
+        s.active_crosshair_mut().offset_y = 60;
+        s.sync_active();
+
+        assert_eq!(
+            (
+                s.crosshairs[0].crosshair.offset_x,
+                s.crosshairs[0].crosshair.offset_y
+            ),
+            (120, -45)
+        );
+        assert_eq!(
+            (
+                s.crosshairs[1].crosshair.offset_x,
+                s.crosshairs[1].crosshair.offset_y
+            ),
+            (-80, 60)
+        );
+    }
+
+    #[test]
+    fn deleting_preset_also_removes_its_hotkey() {
+        let mut s = dot_everywhere();
+        s.preset_hotkeys
+            .insert("Dot".into(), Hotkey { vk: 0x70, mods: 0 });
+        s.delete_preset("Dot");
+        assert!(!s.preset_hotkeys.contains_key("Dot"));
     }
 
     #[test]

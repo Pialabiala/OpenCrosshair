@@ -1,8 +1,8 @@
 use super::widgets::{
     caption, card, empty_state, ghost, heading, hint, icon_button, name_it, primary, texture, thumb,
 };
-use super::{App, Semi, pal};
-use crate::config::{Crosshair, MAX_NAME, Mode};
+use super::{App, ListenTarget, Semi, pal};
+use crate::config::{Crosshair, Hotkey, MAX_NAME, Mode};
 use crate::{overlay, picture, share};
 use eframe::egui::{self, Align2, FontId, RichText, Sense, Stroke, vec2};
 use egui_phosphor::bold as icon;
@@ -12,29 +12,25 @@ impl App {
     pub(super) fn presets_page(&mut self, ui: &mut egui::Ui) {
         heading(
             ui,
-            "Presets",
-            "Save crosshairs and switch between them. Each game can use its own.",
+            "预设",
+            "保存准星配置并在它们之间快速切换，每个游戏也可指定专属预设。",
         );
-        card(ui, "Save current crosshair", |ui| {
+        card(ui, "保存当前准星", |ui| {
             ui.horizontal(|ui| {
-                let t = texture(
-                    &mut self.textures,
-                    ui.ctx(),
-                    "current",
-                    &self.local.crosshair,
-                );
+                let active = self.local.active_crosshair().clone();
+                let t = texture(&mut self.textures, ui.ctx(), "current", &active);
                 thumb(ui, &t, 38.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut self.preset_name)
-                        .hint_text("Preset name")
+                        .hint_text("预设名称")
                         .desired_width(240.0)
                         .char_limit(MAX_NAME),
                 );
                 let name = self.preset_name.trim().to_string();
                 let label = if self.local.presets.contains_key(&name) {
-                    "Overwrite"
+                    "覆盖"
                 } else {
-                    "Save"
+                    "保存"
                 };
                 let text = format!("{}  {label}", icon::FLOPPY_DISK);
                 let clicked = if name.is_empty() {
@@ -55,14 +51,12 @@ impl App {
                 };
                 if clicked {
                     let verb = if self.local.presets.contains_key(&name) {
-                        "Updated"
+                        "已更新"
                     } else {
-                        "Saved"
+                        "已保存"
                     };
-                    self.preset_status = Some(format!("{verb} {name}."));
-                    self.local
-                        .presets
-                        .insert(name, self.local.crosshair.clone());
+                    self.preset_status = Some(format!("{verb}「{name}」。"));
+                    self.local.presets.insert(name, active);
                 }
             });
         });
@@ -73,18 +67,19 @@ impl App {
         let mut export_all = false;
         let mut import = false;
         let mut commit_rename = None;
+        let mut hotkey_actions: Vec<(ListenTarget, Option<Hotkey>)> = Vec::new();
         card(ui, "", |ui| {
             // Shrink left, so the buttons keep their room and the caption gives way when narrow.
             egui::Sides::new().shrink_left().show(
                 ui,
-                |ui| caption(ui, "Saved"),
+                |ui| caption(ui, "已保存"),
                 |ui| {
                     // Right to left, so Import goes first to sit to the right of Export all.
-                    if ghost(ui, &format!("{}  Import", icon::DOWNLOAD_SIMPLE)).clicked() {
+                    if ghost(ui, &format!("{}  导入", icon::DOWNLOAD_SIMPLE)).clicked() {
                         import = true;
                     }
                     if !self.local.presets.is_empty()
-                        && ghost(ui, &format!("{}  Export all", icon::EXPORT)).clicked()
+                        && ghost(ui, &format!("{}  全部导出", icon::EXPORT)).clicked()
                     {
                         export_all = true;
                     }
@@ -99,12 +94,21 @@ impl App {
                 empty_state(
                     ui,
                     icon::BOOKMARKS_SIMPLE,
-                    "Nothing saved yet",
-                    "Save the crosshair above to keep it, and give each game its own. Or import presets someone shared with you.",
+                    "暂无保存的预设",
+                    "在上方保存当前准星即可作为预设，方便在各游戏间切换，或导入他人分享的预设文件。",
                 );
             }
             for (name, c) in &self.local.presets {
                 let t = texture(&mut self.textures, ui.ctx(), &format!("preset:{name}"), c);
+                let hk = self
+                    .local
+                    .preset_hotkeys
+                    .get(name)
+                    .copied()
+                    .unwrap_or_default();
+                let target = ListenTarget::Preset(name.clone());
+                let listening = self.listening.as_ref() == Some(&target);
+                let issue = self.hotkey_issue(&target, hk);
                 // Sides, not a Grid: a long name would widen its column and push the buttons off.
                 egui::Sides::new()
                     .shrink_left()
@@ -149,8 +153,8 @@ impl App {
                                                 pal().muted,
                                             );
                                         }
-                                        if name_it(r, format!("Rename {name}"))
-                                            .on_hover_text(format!("{name} · Click to rename"))
+                                        if name_it(r, format!("重命名 {name}"))
+                                            .on_hover_text(format!("{name} · 点击重命名"))
                                             .clicked()
                                         {
                                             self.renaming = Some((name.clone(), name.clone()));
@@ -158,9 +162,9 @@ impl App {
                                     }
                                 }
                                 let kind = match c.mode {
-                                    Mode::Lines => "Lines".to_string(),
-                                    Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
-                                    Mode::Image => "Image".to_string(),
+                                    Mode::Lines => "线条".to_string(),
+                                    Mode::Pixels => format!("像素 {0}×{0}", c.grid),
+                                    Mode::Image => "图片".to_string(),
                                 };
                                 // An empty path points at the images folder itself, which exists.
                                 if c.mode == Mode::Image
@@ -168,7 +172,7 @@ impl App {
                                         || !crate::config::images_dir().join(&c.image).exists())
                                 {
                                     ui.label(
-                                        RichText::new("Picture missing")
+                                        RichText::new("图片文件缺失")
                                             .small()
                                             .color(pal().yellow.1),
                                     );
@@ -181,7 +185,7 @@ impl App {
                             // Right to left, so the first one added sits at the far edge.
                             let armed = self.confirm_delete.as_ref() == Some(name);
                             let text = if armed {
-                                format!("{}  Delete?", icon::TRASH)
+                                format!("{}  确认删除？", icon::TRASH)
                             } else {
                                 icon::TRASH.to_string()
                             };
@@ -203,15 +207,15 @@ impl App {
                             let r = name_it(
                                 btn,
                                 if armed {
-                                    format!("Confirm delete {name}")
+                                    format!("确认删除 {name}")
                                 } else {
-                                    format!("Delete {name}")
+                                    format!("删除 {name}")
                                 },
                             );
                             let hover = if armed {
-                                "Click again to delete".to_string()
+                                "再次点击以删除".to_string()
                             } else {
-                                format!("Delete {name}")
+                                format!("删除 {name}")
                             };
                             if r.on_hover_text(hover).clicked() {
                                 if armed {
@@ -223,21 +227,52 @@ impl App {
                             if icon_button(
                                 ui,
                                 icon::EXPORT,
-                                format!("Export {name}"),
-                                &format!("Export {name}"),
+                                format!("导出 {name}"),
+                                &format!("导出 {name}"),
                             )
                             .clicked()
                             {
                                 export = Some(name.clone());
                             }
-                            if self.local.crosshair == *c {
+                            if hk.vk != 0
+                                && ghost(ui, icon::X).on_hover_text("清除快捷键").clicked()
+                            {
+                                hotkey_actions.push((target.clone(), Some(Hotkey::default())));
+                            }
+                            if let Some(why) = issue {
                                 ui.label(
-                                    RichText::new(format!("{}  In use", icon::CHECK))
+                                    RichText::new(icon::WARNING)
+                                        .small()
+                                        .color(pal().yellow.1),
+                                )
+                                .on_hover_text(why);
+                            }
+                            let key_label = if listening {
+                                "请按键…".to_string()
+                            } else if hk.vk == 0 {
+                                "绑定快捷键".to_string()
+                            } else {
+                                overlay::key_name(hk)
+                            };
+                            if name_it(
+                                ui.add(egui::Button::new(RichText::new(key_label).small().color(
+                                    if listening { pal().accent } else { pal().text },
+                                ))),
+                                format!("设置预设 {name} 的快捷键"),
+                            )
+                            .on_hover_text("点击后按下快捷键即可绑定")
+                            .clicked()
+                            {
+                                hotkey_actions.push((target, None));
+                            }
+                            if *self.local.active_crosshair() == *c {
+                                ui.label(
+                                    RichText::new(format!("{}  使用中", icon::CHECK))
                                         .color(pal().green.1),
                                 );
                             } else if name_it(
-                                ui.add(egui::Button::new("Load")),
-                                format!("Load {name}"),
+                                ui.add(egui::Button::new("加载")),
+                                format!("加载 {name}"),
                             )
                             .clicked()
                             {
@@ -248,6 +283,12 @@ impl App {
                 ui.add_space(10.0);
             }
         });
+        for (target, set_val) in hotkey_actions {
+            match set_val {
+                Some(hk) => self.set_hotkey(&target, hk),
+                None => self.listening = Some(target),
+            }
+        }
         if let Some((old, new)) = commit_rename {
             match self.local.rename_preset(&old, &new) {
                 Ok(()) => {
@@ -273,13 +314,14 @@ impl App {
         }
         if export_all {
             let all = self.local.presets.clone();
-            self.export_presets(&all, "OpenCrosshair presets.opencrosshair");
+            self.export_presets(&all, "OpenCrosshair 预设合集.opencrosshair");
         }
         if import {
             self.import_presets();
         }
         if let Some(n) = load {
-            self.local.crosshair = self.local.presets[&n].clone();
+            *self.local.active_crosshair_mut() = self.local.presets[&n].clone();
+            self.local.sync_active();
             self.preset_name = n;
         }
         if let Some(n) = delete {
@@ -295,8 +337,8 @@ impl App {
             return;
         };
         self.preset_status = Some(match std::fs::write(&path, share::export(presets)) {
-            Ok(()) => "Exported.".into(),
-            Err(_) => "Couldn't save that file.".into(),
+            Ok(()) => "导出成功。".into(),
+            Err(_) => "无法保存该文件。".into(),
         });
     }
 
@@ -306,14 +348,14 @@ impl App {
             return;
         };
         let Ok(text) = std::fs::read_to_string(&path) else {
-            self.preset_status = Some("Couldn't read that file.".into());
+            self.preset_status = Some("无法读取该文件。".into());
             return;
         };
         self.preset_status = Some(match share::import(&text, &self.local.presets) {
             Ok(new) => {
                 let n = new.len();
                 self.local.presets.extend(new);
-                format!("Imported {n} preset{}.", if n == 1 { "" } else { "s" })
+                format!("成功导入 {n} 个预设。")
             }
             Err(e) => e,
         });

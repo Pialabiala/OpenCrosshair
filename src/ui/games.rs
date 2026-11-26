@@ -32,22 +32,22 @@ fn dropdown(
 /// The three choices that make up an aiming rule. Used for the default and for a game's own.
 fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimRule) {
     let shown = match &rule.action {
-        Aim::Keep => "Keep the crosshair".to_string(),
-        Aim::Hide => "Hide it".to_string(),
-        Aim::Show => "Show only while aiming".to_string(),
-        Aim::Preset(name) => format!("Switch to {name}"),
+        Aim::Keep => "保持准星不变".to_string(),
+        Aim::Hide => "隐藏准星".to_string(),
+        Aim::Show => "仅在瞄准时显示".to_string(),
+        Aim::Preset(name) => format!("切换到 {name}"),
     };
     egui::Grid::new(("aim_rule", id))
         .num_columns(2)
         .spacing([20.0, 10.0])
         .show(ui, |ui| {
-            let label = ui.label(RichText::new("When you aim").color(pal().muted));
+            let label = ui.label(RichText::new("瞄准时动作").color(pal().muted));
             dropdown(ui, (id, "action"), 220.0, &shown, |ui| {
-                ui.selectable_value(&mut rule.action, Aim::Keep, "Keep the crosshair");
-                ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
-                ui.selectable_value(&mut rule.action, Aim::Show, "Show only while aiming");
+                ui.selectable_value(&mut rule.action, Aim::Keep, "保持准星不变");
+                ui.selectable_value(&mut rule.action, Aim::Hide, "隐藏准星");
+                ui.selectable_value(&mut rule.action, Aim::Show, "仅在瞄准时显示");
                 for name in presets {
-                    let choice = format!("Switch to {name}");
+                    let choice = format!("切换到 {name}");
                     ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
                 }
             })
@@ -56,7 +56,7 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
 
             // With "Keep the crosshair" nothing changes while aiming, so these two do nothing.
             let live = rule.action != Aim::Keep;
-            let label = ui.label(RichText::new("Aim button").color(pal().muted));
+            let label = ui.label(RichText::new("瞄准按键").color(pal().muted));
             ui.add_enabled_ui(live, |ui| {
                 egui::ComboBox::from_id_salt((id, "button"))
                     .selected_text(rule.button.label())
@@ -76,7 +76,7 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
                     check(
                         ui,
                         &mut rule.toggle,
-                        "Toggle: press once to aim, press again to stop",
+                        "切换模式：按一次开镜，再按一次退出",
                     );
                 });
             });
@@ -85,20 +85,20 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
         ui.add_space(4.0);
         hint(
             ui,
-            "Choose \"Hide it\", \"Show only while aiming\" or a preset above to turn on the button and toggle.",
+            "在上方选择“隐藏准星”、“仅在瞄准时显示”或某个预设后，即可配置瞄准按键与切换模式。",
         );
     }
 }
 
 /// What a rule does, in a few words, for showing the default next to a game that follows it.
 fn describe_aim(rule: &AimRule) -> String {
-    let button = rule.button.label().to_lowercase();
-    let how = if rule.toggle { "toggled" } else { "held" };
+    let button = rule.button.label();
+    let how = if rule.toggle { "切换" } else { "按住" };
     match &rule.action {
-        Aim::Keep => "the crosshair never changes while aiming".to_string(),
-        Aim::Hide => format!("hide the crosshair while the {button} is {how}"),
-        Aim::Show => format!("show the crosshair only while the {button} is {how}"),
-        Aim::Preset(name) => format!("switch to {name} while the {button} is {how}"),
+        Aim::Keep => "瞄准时准星保持不变".to_string(),
+        Aim::Hide => format!("{how}{button}时隐藏准星"),
+        Aim::Show => format!("仅在{how}{button}时显示准星"),
+        Aim::Preset(name) => format!("{how}{button}时切换到「{name}」"),
     }
 }
 
@@ -152,11 +152,7 @@ fn app_icon(ui: &mut egui::Ui, info: &AppInfo, size: f32) {
 
 impl App {
     pub(super) fn games_page(&mut self, ui: &mut egui::Ui) {
-        heading(
-            ui,
-            "Games",
-            "Show the crosshair only in the games you choose.",
-        );
+        heading(ui, "游戏", "仅在你指定的游戏中自动显示准星。");
         // Games added by typing their exe name get a proper name and icon once they've been seen
         // running.
         for g in &mut self.local.games {
@@ -169,18 +165,19 @@ impl App {
                 }
             }
         }
+        let active_fallback = self.local.active_crosshair().clone();
         let s = &mut self.local;
 
         card(ui, "", |ui| {
             check(
                 ui,
                 &mut s.only_games,
-                RichText::new("Only show in my games").semi(),
+                RichText::new("仅在我的游戏中显示").semi(),
             );
             let note = if s.only_games {
-                "Hidden in every other app. It still shows while this window is focused, so you can preview."
+                "在其他软件中自动隐藏。当前设置窗口位于前台时仍会显示以便预览。"
             } else {
-                "The crosshair currently draws on top of everything."
+                "当前准星会显示在所有窗口上方。"
             };
             hint(ui, note);
         });
@@ -193,13 +190,13 @@ impl App {
         };
         let preset_names: Vec<String> = s.presets.keys().cloned().collect();
 
-        card(ui, "My games", |ui| {
+        card(ui, "我的游戏", |ui| {
             if s.games.is_empty() {
                 empty_state(
                     ui,
                     icon::GAME_CONTROLLER,
-                    "No games yet",
-                    "Add one below and the crosshair will only show while you're playing it.",
+                    "暂无游戏",
+                    "在下方添加游戏后，准星将仅在你游玩这些游戏时显示。",
                 );
             }
             let mut remove = None;
@@ -227,8 +224,8 @@ impl App {
                             .on_hover_text(full);
                     },
                     |ui| {
-                        if name_it(ghost(ui, icon::X), format!("Remove {name}"))
-                            .on_hover_text(format!("Remove {name}"))
+                        if name_it(ghost(ui, icon::X), format!("移除 {name}"))
+                            .on_hover_text(format!("移除 {name}"))
                             .clicked()
                         {
                             remove = Some(i);
@@ -246,30 +243,29 @@ impl App {
                         // Roomy enough that the checkbox doesn't sit flush against the dropdown.
                         ui.spacing_mut().item_spacing.x = 12.0;
                         ui.spacing_mut().button_padding.x = 6.0;
-                        let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
+                        let c = s.presets.get(&g.preset).unwrap_or(&active_fallback);
                         let t =
                             texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
                         thumb(ui, &t, 34.0);
                         // Owned, because the menu below changes g.preset.
                         let shown = if g.preset.is_empty() {
-                            "Current crosshair".to_string()
+                            "跟随当前准星".to_string()
                         } else {
                             g.preset.clone()
                         };
                         // 140 wide. Wider gaps wrap the whole controls, so the line still breaks cleanly.
                         dropdown(ui, ("preset", i), 140.0, &shown, |ui| {
-                            ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
+                            ui.selectable_value(&mut g.preset, String::new(), "跟随当前准星");
                             for name in s.presets.keys() {
                                 ui.selectable_value(&mut g.preset, name.clone(), name);
                             }
                         });
                         // "Windowed", not a longer label, so the settings line stays short.
-                        let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
-                            "Only for games you play in a window: centres the crosshair on the \
-                         game's window instead of the middle of the screen.",
+                        let windowed = check(ui, &mut g.windowed, "窗口化").on_hover_text(
+                            "仅适用于窗口模式游玩的游戏：以游戏窗口中心为基准，而非显示器屏幕中心。",
                         );
                         // Every row says "Windowed", so say which game each belongs to.
-                        let (on, label) = (g.windowed, format!("Windowed: {name}"));
+                        let (on, label) = (g.windowed, format!("窗口化：{name}"));
                         windowed.widget_info(|| {
                             egui::WidgetInfo::selected(
                                 egui::WidgetType::Checkbox,
@@ -287,17 +283,21 @@ impl App {
                         } else {
                             icon::CARET_DOWN
                         };
-                        let aim_text = if custom { "Custom aim" } else { "Default aim" };
+                        let aim_text = if custom {
+                            "自定义开镜"
+                        } else {
+                            "默认开镜"
+                        };
                         let text = format!("{aim_text} {caret}");
                         let btn = egui::Button::new(RichText::new(text).color(ink))
                             .frame_when_inactive(open);
                         let tip = if custom {
-                            "This game has its own aiming rule"
+                            "此游戏已设置独立的开镜规则"
                         } else {
-                            "Aiming settings for this game"
+                            "此游戏的开镜设置"
                         };
                         // The frame shows on hover (the button's own hover style); pointer says "click".
-                        let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"))
+                        let btn = name_it(ui.add(btn), format!("{name} 的开镜设置"))
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if btn.on_hover_text(tip).clicked() {
                             self.open_game = if open { None } else { Some(g.exe.clone()) };
@@ -312,22 +312,21 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(16, 14))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(RichText::new(format!("Aiming in {name}")).semi());
+                            ui.label(RichText::new(format!("{name} 的开镜设置")).semi());
                             hint(
                                 ui,
-                                "What a mouse button does to the crosshair in this game. \
-                                 Choose \"Keep the crosshair\" to make it ignore aiming here.",
+                                "按下鼠标瞄准键时对该游戏准星的操作。选择“保持准星不变”可在此游戏中忽略瞄准。",
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 let default = vec2(140.0, 30.0);
-                                if segment(ui, "Use my default".into(), g.aim.is_none(), default)
+                                if segment(ui, "使用默认规则".into(), g.aim.is_none(), default)
                                     .clicked()
                                 {
                                     g.aim = None;
                                 }
                                 let own = vec2(180.0, 30.0);
-                                if segment(ui, "Custom for this game".into(), g.aim.is_some(), own)
+                                if segment(ui, "为此游戏单独设置".into(), g.aim.is_some(), own)
                                     .clicked()
                                     && g.aim.is_none()
                                 {
@@ -339,10 +338,7 @@ impl App {
                                 None => {
                                     hint(
                                         ui,
-                                        format!(
-                                            "Using your default: {}.",
-                                            describe_aim(&default_rule)
-                                        ),
+                                        format!("当前使用默认规则：{}。", describe_aim(&default_rule)),
                                     );
                                 }
                             }
@@ -373,7 +369,7 @@ impl App {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!(
-                        "{}  {name} has fullscreen optimizations turned off, so in fullscreen nothing can draw over it.",
+                        "{}  {name} 已关闭“全屏优化”，在独占全屏模式下无法显示悬浮准星。",
                         icon::WARNING
                     ))
                     .small()
@@ -382,10 +378,9 @@ impl App {
                 if info.fso == apps::Fso::OffForEveryone {
                     hint(
                         ui,
-                        "It's set for every account. Untick \"Disable fullscreen optimizations\" \
-                         in the game's Properties > Compatibility tab (needs admin), or play borderless.",
+                        "该设置对所有账户生效。请在游戏 exe 的 属性 > 兼容性 中取消勾选“禁用全屏优化”（需要管理员权限），或改用无边框窗口模式。",
                     );
-                } else if ghost(ui, &format!("{}  Turn them back on", icon::WRENCH)).clicked()
+                } else if ghost(ui, &format!("{}  重新开启全屏优化", icon::WRENCH)).clicked()
                     && apps::enable_fullscreen_optimizations(&g.path)
                 {
                     info.fso = apps::Fso::On;
@@ -401,8 +396,8 @@ impl App {
                 };
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    hint(ui, format!("Removed {name}."));
-                    undo = name_it(ghost(ui, "Undo"), format!("Undo removing {name}")).clicked();
+                    hint(ui, format!("已移除 {name}。"));
+                    undo = name_it(ghost(ui, "撤销"), format!("撤销移除 {name}")).clicked();
                 });
             }
             if undo && let Some((i, g)) = self.removed_game.take() {
@@ -430,11 +425,11 @@ impl App {
             }
             new
         };
-        card(ui, "Add a game", |ui| {
+        card(ui, "添加游戏", |ui| {
             ui.horizontal(|ui| {
                 let mut picked = None;
                 egui::ComboBox::from_id_salt("running")
-                    .selected_text("Pick a running app…")
+                    .selected_text("选择正在运行的程序…")
                     .width(260.0)
                     .show_ui(ui, |ui| {
                         for (i, app) in self.running.iter().enumerate() {
@@ -458,21 +453,21 @@ impl App {
                         self.removed_game = None;
                     }
                 }
-                if ghost(ui, &format!("{}  Refresh", icon::ARROWS_CLOCKWISE)).clicked() {
+                if ghost(ui, &format!("{}  刷新", icon::ARROWS_CLOCKWISE)).clicked() {
                     self.running = apps::running();
                 }
             });
             ui.horizontal(|ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.game_input)
-                        .hint_text("or type its exe name, e.g. cs2")
+                        .hint_text("或手动输入 exe 名称，例如 cs2")
                         .desired_width(260.0),
                 );
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if primary(
                     ui,
                     !self.game_input.trim().is_empty(),
-                    &format!("{}  Add", icon::PLUS),
+                    &format!("{}  添加", icon::PLUS),
                 )
                 .clicked()
                     || enter
@@ -483,20 +478,20 @@ impl App {
                     self.game_input.clear();
                 }
             });
-            hint(ui, "Open the game first, then press Refresh to find it.");
+            hint(ui, "请先打开游戏，再点击“刷新”从列表中选择。");
         });
 
-        card(ui, "While aiming", |ui| {
+        card(ui, "瞄准时行为", |ui| {
             let mut rule = default_rule.clone();
             aim_controls(ui, "default", &preset_names, &mut rule);
             (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
             hint(
                 ui,
-                "For games where you aim down sights. It reads the button's state, with no input hooks.",
+                "适用于开镜瞄准类游戏：仅轮询按键状态，不会向游戏注入任何输入钩子。",
             );
             hint(
                 ui,
-                "This is the default for every game. To give one game its own, use Default aim on its row in My games.",
+                "此项为所有游戏的默认规则；如需为单个游戏单独配置，请点击「我的游戏」对应行中的“默认开镜”。",
             );
         });
     }

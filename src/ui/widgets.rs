@@ -212,7 +212,7 @@ pub(super) fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
             egui::WidgetType::Checkbox,
             ui.is_enabled(),
             *on,
-            "Show crosshair",
+            "显示准星",
         )
     });
 

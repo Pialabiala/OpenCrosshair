@@ -17,3 +17,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - run: cargo build --release
+      - name: Package executables
+        shell: bash
+        run: |
+          cp target/release/OpenCrosshair.exe OpenCrosshair.exe
+          cp target/release/OpenCrosshair.exe OpenCrosshair-Setup.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: OpenCrosshair-Windows
+          path: |
+            OpenCrosshair.exe
+            OpenCrosshair-Setup.exe

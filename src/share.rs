@@ -12,7 +12,7 @@ const MAX_PRESETS: usize = 100;
 const IMAGE_EXTS: [&str; 9] = [
     "png", "jpg", "jpeg", "bmp", "gif", "ico", "tif", "tiff", "webp",
 ];
-const NOT_OURS: &str = "That isn't an OpenCrosshair file.";
+const NOT_OURS: &str = "这不是有效的 OpenCrosshair 文件。";
 
 /// Pretty JSON: {"opencrosshair":1,"presets":{..},"images":{"<file>":"<base64>"}}.
 pub fn export(presets: &BTreeMap<String, Crosshair>) -> String {
@@ -44,7 +44,7 @@ pub fn import(
     existing: &BTreeMap<String, Crosshair>,
 ) -> Result<BTreeMap<String, Crosshair>, String> {
     if text.len() > MAX_TEXT {
-        return Err("That file is over 5 MB, so it can't be an OpenCrosshair file.".into());
+        return Err("文件大小超过 5 MB，无法作为 OpenCrosshair 文件导入。".into());
     }
     let doc: Value = serde_json::from_str(text).map_err(|_| NOT_OURS.to_string())?;
     let version = doc
@@ -53,10 +53,7 @@ pub fn import(
         .filter(|&v| v >= 1)
         .ok_or_else(|| NOT_OURS.to_string())?;
     if version > VERSION {
-        return Err(
-            "That file was made by a newer version of OpenCrosshair. Update OpenCrosshair to open it."
-                .into(),
-        );
+        return Err("该文件由更高版本的 OpenCrosshair 创建，请先更新软件再打开。".into());
     }
     let images: BTreeMap<String, String> = doc
         .get("images")
@@ -90,7 +87,7 @@ pub fn import(
         out.insert(name, c);
     }
     if out.is_empty() {
-        return Err("That file doesn't contain any presets.".into());
+        return Err("该文件中不包含任何预设。".into());
     }
     Ok(out)
 }

@@ -81,11 +81,11 @@ pub fn pick(owner: Option<HWND>) -> Option<PathBuf> {
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let filter = [COMDLG_FILTERSPEC {
-            pszName: w!("Pictures"),
+            pszName: w!("图片文件"),
             pszSpec: w!("*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.ico;*.tif;*.tiff;*.webp"),
         }];
         dialog.SetFileTypes(&filter).ok()?;
-        dialog.SetTitle(w!("Choose a crosshair image")).ok()?;
+        dialog.SetTitle(w!("选择准星图片")).ok()?;
         dialog.Show(owner).ok()?; // cancelling comes back as an error
         let name = dialog
             .GetResult()
@@ -106,16 +106,16 @@ pub fn pick_share(owner: Option<HWND>) -> Option<PathBuf> {
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let filter = [
             COMDLG_FILTERSPEC {
-                pszName: w!("OpenCrosshair files"),
+                pszName: w!("OpenCrosshair 配置文件"),
                 pszSpec: w!("*.opencrosshair"),
             },
             COMDLG_FILTERSPEC {
-                pszName: w!("All files"),
+                pszName: w!("所有文件"),
                 pszSpec: w!("*.*"),
             },
         ];
         dialog.SetFileTypes(&filter).ok()?;
-        dialog.SetTitle(w!("Import crosshairs")).ok()?;
+        dialog.SetTitle(w!("导入准星预设")).ok()?;
         dialog.Show(owner).ok()?; // cancelling comes back as an error
         let name = dialog
             .GetResult()
@@ -136,13 +136,13 @@ pub fn save_share(owner: Option<HWND>, default_name: &str) -> Option<PathBuf> {
         let dialog: IFileSaveDialog =
             CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let filter = [COMDLG_FILTERSPEC {
-            pszName: w!("OpenCrosshair files"),
+            pszName: w!("OpenCrosshair 配置文件"),
             pszSpec: w!("*.opencrosshair"),
         }];
         dialog.SetFileTypes(&filter).ok()?;
         dialog.SetFileName(&HSTRING::from(default_name)).ok()?;
         dialog.SetDefaultExtension(w!("opencrosshair")).ok()?;
-        dialog.SetTitle(w!("Export crosshairs")).ok()?;
+        dialog.SetTitle(w!("导出准星预设")).ok()?;
         dialog.Show(owner).ok()?; // cancelling comes back as an error
         let name = dialog
             .GetResult()

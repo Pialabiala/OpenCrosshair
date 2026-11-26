@@ -4,8 +4,8 @@
 use crate::apps;
 use crate::config::{Aim, Crosshair, Hotkey, Settings};
 use crate::render::{self, Image};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -17,16 +17,28 @@ use windows::Win32::UI::Shell::{
     QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{BOOL, PCWSTR, w};
+use windows::core::{BOOL, HSTRING, PCWSTR, w};
 
 pub const TITLE: &str = "OpenCrosshair"; // settings window title
 
 pub static VISIBLE: AtomicBool = AtomicBool::new(true);
 /// True while a game from the list is focused. The updater waits for this to clear.
 pub static IN_GAME: AtomicBool = AtomicBool::new(false);
-/// Whether each hotkey (toggle, menu) registered. False means another app already owns it.
-pub static KEY_OK: [AtomicBool; 2] = [AtomicBool::new(true), AtomicBool::new(true)];
+/// Hotkeys that failed RegisterHotKey (another app owns them).
+pub static FAILED_HOTKEYS: Mutex<Vec<Hotkey>> = Mutex::new(Vec::new());
+/// Bumped whenever the overlay thread modifies `Settings` (e.g. switching crosshairs via hotkey/tray).
+pub static SETTINGS_REV: AtomicU64 = AtomicU64::new(0);
 pub static STATUS: Mutex<Status> = Mutex::new(Status::Everywhere);
+
+static SHARED_SETTINGS: OnceLock<Arc<Mutex<Settings>>> = OnceLock::new();
+
+pub fn settings_rev() -> u64 {
+    SETTINGS_REV.load(Ordering::Acquire)
+}
+
+pub fn is_hotkey_failed(hk: Hotkey) -> bool {
+    hk.vk != 0 && FAILED_HOTKEYS.lock().unwrap().contains(&hk)
+}
 
 #[derive(Clone, PartialEq)]
 pub enum Status {
@@ -49,6 +61,10 @@ const WM_TRAY: u32 = WM_APP + 2;
 const AIM_TIMER: usize = 2; // the topmost timer is 1
 const HK_TOGGLE: i32 = 1;
 const HK_MENU: i32 = 2;
+const HK_PREV: i32 = 3;
+const HK_NEXT: i32 = 4;
+const HK_CROSSHAIR_BASE: i32 = 1000;
+const HK_PRESET_BASE: i32 = 2000;
 // Sent between OpenCrosshair processes: a second launch asks us to show the settings,
 // the installer and uninstaller ask us to quit.
 const MSG_SHOW: PCWSTR = w!("OpenCrosshair.Show");
@@ -76,6 +92,7 @@ pub fn signal_running(quit: bool) {
 }
 
 pub fn run(settings: Arc<Mutex<Settings>>) {
+    let _ = SHARED_SETTINGS.set(settings.clone());
     unsafe {
         let inst: HINSTANCE = GetModuleHandleW(None).unwrap().into();
         let class = w!("OpenCrosshairOverlay");
@@ -161,11 +178,87 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             match msg.message {
-                WM_HOTKEY if msg.wParam.0 as i32 == HK_TOGGLE => {
-                    VISIBLE.fetch_xor(true, Ordering::Relaxed);
-                    apply(hwnd, &settings, &mut st);
+                WM_HOTKEY => {
+                    let id = msg.wParam.0 as i32;
+                    match id {
+                        HK_TOGGLE => {
+                            VISIBLE.fetch_xor(true, Ordering::Relaxed);
+                            apply(hwnd, &settings, &mut st);
+                        }
+                        HK_MENU => toggle_settings(false),
+                        HK_PREV | HK_NEXT => {
+                            let changed = {
+                                let mut s = settings.lock().unwrap();
+                                let len = s.crosshairs.len();
+                                if len > 1 {
+                                    let next = if id == HK_PREV {
+                                        (s.active_crosshair + len - 1) % len
+                                    } else {
+                                        (s.active_crosshair + 1) % len
+                                    };
+                                    s.set_active_crosshair(next);
+                                    s.save();
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
+                            if changed {
+                                VISIBLE.store(true, Ordering::Relaxed);
+                                SETTINGS_REV.fetch_add(1, Ordering::Release);
+                                apply(hwnd, &settings, &mut st);
+                                crate::ui::repaint();
+                            }
+                        }
+                        id if (HK_CROSSHAIR_BASE..HK_PRESET_BASE).contains(&id) => {
+                            let idx = (id - HK_CROSSHAIR_BASE) as usize;
+                            let mut switched = false;
+                            {
+                                let mut s = settings.lock().unwrap();
+                                if idx < s.crosshairs.len() {
+                                    if s.active_crosshair == idx && VISIBLE.load(Ordering::Relaxed)
+                                    {
+                                        VISIBLE.store(false, Ordering::Relaxed);
+                                    } else {
+                                        s.set_active_crosshair(idx);
+                                        s.save();
+                                        VISIBLE.store(true, Ordering::Relaxed);
+                                        switched = true;
+                                    }
+                                }
+                            }
+                            if switched {
+                                SETTINGS_REV.fetch_add(1, Ordering::Release);
+                            }
+                            apply(hwnd, &settings, &mut st);
+                            crate::ui::repaint();
+                        }
+                        id if id >= HK_PRESET_BASE => {
+                            if let Some((_, preset_name)) =
+                                st.preset_bindings.iter().find(|(bid, _)| *bid == id)
+                            {
+                                let loaded = {
+                                    let mut s = settings.lock().unwrap();
+                                    if let Some(preset) = s.presets.get(preset_name).cloned() {
+                                        *s.active_crosshair_mut() = preset;
+                                        s.sync_active();
+                                        s.save();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if loaded {
+                                    VISIBLE.store(true, Ordering::Relaxed);
+                                    SETTINGS_REV.fetch_add(1, Ordering::Release);
+                                    apply(hwnd, &settings, &mut st);
+                                    crate::ui::repaint();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
-                WM_HOTKEY if msg.wParam.0 as i32 == HK_MENU => toggle_settings(false),
                 WM_REFRESH => apply(hwnd, &settings, &mut st),
                 WM_TIMER if msg.wParam.0 == AIM_TIMER => {
                     // Aiming is read by checking the button about 64 times a second, and only
@@ -235,7 +328,8 @@ unsafe extern "system" fn on_focus(
 #[derive(Default)]
 struct State {
     own_exe: String,
-    keys: [Hotkey; 2],
+    registered: Vec<(i32, Hotkey)>,
+    preset_bindings: Vec<(i32, String)>,
     drawn: Option<Crosshair>, // skip re-rendering when nothing changed
     size: (i32, i32),
     at: POINT,
@@ -293,7 +387,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         }
     }
     let visible = VISIBLE.load(Ordering::Relaxed);
-    let (c, keys, show, in_game, aim_on, faded) = {
+    let (c, desired_keys, preset_bindings, show, in_game, aim_on, faded) = {
         let s = settings.lock().unwrap();
         let target_game = s.games.iter().find(|g| g.exe == st.last_exe);
         let game = target_game.filter(|_| !ours);
@@ -302,7 +396,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         // While our own window is focused, preview the crosshair being edited.
         let mut c = game
             .and_then(|g| s.presets.get(&g.preset))
-            .unwrap_or(&s.crosshair)
+            .unwrap_or_else(|| s.active_crosshair())
             .clone();
         let mut show = visible && (!s.only_games || game.is_some() || ours);
         st.fullscreen = game.is_some() && d3d_fullscreen();
@@ -344,15 +438,38 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             // Not aiming: stay hidden. aim_on was worked out above, so polling keeps running.
             show = false;
         }
+
+        let mut desired = vec![
+            (HK_TOGGLE, s.toggle_key),
+            (HK_MENU, s.menu_key),
+            (HK_PREV, s.prev_crosshair_key),
+            (HK_NEXT, s.next_crosshair_key),
+        ];
+        for (i, slot) in s.crosshairs.iter().enumerate() {
+            if slot.hotkey.vk != 0 {
+                desired.push((HK_CROSSHAIR_BASE + i as i32, slot.hotkey));
+            }
+        }
+        let mut preset_bindings = Vec::new();
+        for (i, (name, &hk)) in s.preset_hotkeys.iter().enumerate() {
+            if hk.vk != 0 && s.presets.contains_key(name) {
+                let id = HK_PRESET_BASE + i as i32;
+                desired.push((id, hk));
+                preset_bindings.push((id, name.clone()));
+            }
+        }
+
         (
             c,
-            [s.toggle_key, s.menu_key],
+            desired,
+            preset_bindings,
             show,
             game.is_some(),
             aim_on,
             faded,
         )
     };
+    st.preset_bindings = preset_bindings;
     IN_GAME.store(in_game, Ordering::Relaxed);
     if aim_on != st.polling {
         unsafe {
@@ -365,25 +482,35 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         st.polling = aim_on;
     }
 
-    for (i, hk) in keys.into_iter().enumerate() {
-        if st.keys[i] != hk {
-            let id = i as i32 + 1;
+    if st.registered != desired_keys {
+        for &(id, _) in &st.registered {
             unsafe {
                 let _ = UnregisterHotKey(Some(hwnd), id);
-                let ok = hk.vk == 0
-                    || RegisterHotKey(
-                        Some(hwnd),
-                        id,
-                        HOT_KEY_MODIFIERS(hk.mods) | MOD_NOREPEAT,
-                        hk.vk,
-                    )
-                    .is_ok();
-                KEY_OK[i].store(ok, Ordering::Relaxed);
             }
-            // The keybinds card warns when another app owns a key.
-            crate::ui::repaint();
-            st.keys[i] = hk;
         }
+        let mut seen: Vec<Hotkey> = Vec::new();
+        let mut failed: Vec<Hotkey> = Vec::new();
+        for &(id, hk) in &desired_keys {
+            if hk.vk == 0 || seen.contains(&hk) {
+                continue;
+            }
+            seen.push(hk);
+            let ok = unsafe {
+                RegisterHotKey(
+                    Some(hwnd),
+                    id,
+                    HOT_KEY_MODIFIERS(hk.mods) | MOD_NOREPEAT,
+                    hk.vk,
+                )
+                .is_ok()
+            };
+            if !ok {
+                failed.push(hk);
+            }
+        }
+        *FAILED_HOTKEYS.lock().unwrap() = failed;
+        st.registered = desired_keys;
+        crate::ui::repaint();
     }
 
     unsafe {
@@ -655,7 +782,7 @@ fn key_name_lparam(vk: u32, scan_ex: u32) -> i32 {
 
 pub fn key_name(hk: Hotkey) -> String {
     if hk.vk == 0 {
-        return "Not set".into();
+        return "未设置".into();
     }
     let mut s = String::new();
     for (bit, name) in [(2, "Ctrl+"), (4, "Shift+"), (1, "Alt+")] {
@@ -670,7 +797,7 @@ pub fn key_name(hk: Hotkey) -> String {
         if n > 0 {
             s += &String::from_utf16_lossy(&buf[..n as usize]);
         } else {
-            s += &format!("Key {:#04X}", hk.vk);
+            s += &format!("按键 {:#04X}", hk.vk);
         }
     }
     s
@@ -727,6 +854,7 @@ unsafe fn tray_menu(h: HWND) {
     const OPEN: usize = 1;
     const TOGGLE: usize = 2;
     const QUIT: usize = 3;
+    const CROSSHAIR_BASE: usize = 100;
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
         let shown = if VISIBLE.load(Ordering::Relaxed) {
@@ -734,10 +862,29 @@ unsafe fn tray_menu(h: HWND) {
         } else {
             MF_UNCHECKED
         };
-        let _ = AppendMenuW(menu, MF_STRING, OPEN, w!("Open settings"));
-        let _ = AppendMenuW(menu, MF_STRING | shown, TOGGLE, w!("Show crosshair"));
+        let _ = AppendMenuW(menu, MF_STRING, OPEN, w!("打开设置"));
+        let _ = AppendMenuW(menu, MF_STRING | shown, TOGGLE, w!("显示准星"));
+        if let Some(shared) = SHARED_SETTINGS.get() {
+            let s = shared.lock().unwrap();
+            if s.crosshairs.len() > 1 {
+                let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+                for (i, slot) in s.crosshairs.iter().enumerate() {
+                    let flag = if i == s.active_crosshair {
+                        MF_CHECKED
+                    } else {
+                        MF_UNCHECKED
+                    };
+                    let _ = AppendMenuW(
+                        menu,
+                        MF_STRING | flag,
+                        CROSSHAIR_BASE + i,
+                        &HSTRING::from(&slot.name),
+                    );
+                }
+            }
+        }
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(menu, MF_STRING, QUIT, w!("Quit"));
+        let _ = AppendMenuW(menu, MF_STRING, QUIT, w!("退出"));
         let mut at = POINT::default();
         let _ = GetCursorPos(&mut at);
         // The menu only closes on an outside click if its window is in front.
@@ -756,6 +903,26 @@ unsafe fn tray_menu(h: HWND) {
                 let overlay = HWND(OVERLAY.load(Ordering::Acquire) as _);
                 let quit = RegisterWindowMessageW(MSG_QUIT);
                 let _ = PostMessageW(Some(overlay), quit, WPARAM(0), LPARAM(0));
+            }
+            id if id >= CROSSHAIR_BASE => {
+                let idx = id - CROSSHAIR_BASE;
+                if let Some(shared) = SHARED_SETTINGS.get() {
+                    let changed = {
+                        let mut s = shared.lock().unwrap();
+                        if s.set_active_crosshair(idx) {
+                            s.save();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if changed {
+                        VISIBLE.store(true, Ordering::Relaxed);
+                        SETTINGS_REV.fetch_add(1, Ordering::Release);
+                        refresh();
+                        crate::ui::repaint();
+                    }
+                }
             }
             _ => {}
         }

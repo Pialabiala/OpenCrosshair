@@ -21,7 +21,7 @@ use windows::Win32::Security::WinTrust::*;
 use windows::core::{HSTRING, PCWSTR, w};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO: &str = "Tu2525/OpenCrosshair";
+const REPO: &str = "Pialabiala/OpenCrosshair";
 const ASSET: &str = "OpenCrosshair.exe";
 /// The exe is ~11 MB; refuse to buffer anything much bigger.
 const MAX_BODY: usize = 64 * 1024 * 1024;
@@ -139,13 +139,11 @@ fn latest_tag() -> Result<Option<String>, String> {
         None if probe.status == 404 => return Ok(None), // no releases published yet
         // Shown as "Last check failed: ...", so say it in words; it retries on its own.
         None if matches!(probe.status, 403 | 429) => {
-            return Err(
-                "GitHub is limiting requests from your network. Trying again in 10 minutes.".into(),
-            );
+            return Err("GitHub 限制了当前网络的请求频率，10 分钟后重试。".into());
         }
         None => {
             return Err(format!(
-                "GitHub had a problem (HTTP {}). Trying again in 10 minutes.",
+                "GitHub 返回异常状态（HTTP {}），10 分钟后重试。",
                 probe.status
             ));
         }
@@ -169,7 +167,7 @@ fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
         true,
     )?;
     if res.status == 404 {
-        return Err("the release has no OpenCrosshair.exe".into());
+        return Err("该发布版本未包含 OpenCrosshair.exe".into());
     }
     // A cut-off download would leave an exe that doesn't start, so check it's all there.
     // The real exe is ~11 MB, so anything tiny is an error page, not a build.
@@ -180,7 +178,7 @@ fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
             .content_length
             .is_none_or(|n| n == res.body.len() as u64);
     if !complete {
-        return Err("the download was incomplete".into());
+        return Err("下载文件不完整".into());
     }
     // Catches a corrupted or swapped download. It can't catch a compromised release, since
     // whoever replaces the exe can replace the hash too; only code signing does that.
@@ -189,13 +187,13 @@ fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
         true,
     )?;
     if sums.status != 200 || !hash_matches(&res.body, &sums.body) {
-        return Err("the download didn't match its SHA-256".into());
+        return Err("下载文件 SHA-256 校验失败".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // Once releases are signed, an install that is signed only accepts signed updates, so a
     // swapped-in unsigned exe can't downgrade it. Unsigned installs update as before.
     swap(&exe, &res.body, is_signed(&exe))
-        .map_err(|e| format!("couldn't replace {}: {e}", exe.display()))?;
+        .map_err(|e| format!("无法替换 {}：{e}", exe.display()))?;
     Ok(Some((exe, tag)))
 }
 
@@ -249,7 +247,7 @@ fn swap(exe: &Path, new_bytes: &[u8], require_signed: bool) -> std::io::Result<(
     std::fs::write(&new, new_bytes)?;
     if require_signed && !is_signed(&new) {
         let _ = std::fs::remove_file(&new);
-        return Err(std::io::Error::other("the new exe isn't validly signed"));
+        return Err(std::io::Error::other("新版本 exe 未携带有效签名"));
     }
     let _ = std::fs::remove_file(&old);
     std::fs::rename(exe, &old)?; // allowed while running
@@ -276,9 +274,7 @@ fn restart(exe: &Path, version: &str, settings: &Mutex<Settings>) {
             overlay::remove_tray();
             std::process::exit(0)
         }
-        Err(e) => set(Status::Failed(format!(
-            "updated, but couldn't restart: {e}"
-        ))),
+        Err(e) => set(Status::Failed(format!("更新完成，但重启失败：{e}"))),
     }
 }
 
@@ -297,11 +293,11 @@ fn request(url: &str, follow_redirects: bool) -> Result<Response, String> {
         }
     }
     let err = |what: &str| format!("{what}: {}", windows::core::Error::from_thread());
-    let offline = |e: windows::core::Error| format!("couldn't reach GitHub ({})", e.message());
+    let offline = |e: windows::core::Error| format!("无法连接 GitHub（{}）", e.message());
 
     let rest = url
         .strip_prefix("https://")
-        .ok_or("only https URLs are allowed")?;
+        .ok_or("仅允许 HTTPS 链接")?;
     let (host, path) = rest
         .split_once('/')
         .map_or((rest, "/".to_string()), |(h, p)| (h, format!("/{p}")));
@@ -404,7 +400,7 @@ fn request(url: &str, follow_redirects: bool) -> Result<Response, String> {
                 break;
             }
             if body.len() + n as usize > MAX_BODY {
-                return Err("the download was larger than expected".into());
+                return Err("下载文件大小超出预期".into());
             }
             body.extend_from_slice(&buf[..n as usize]);
         }
