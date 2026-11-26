@@ -113,9 +113,9 @@ impl App {
             hint(ui, "每个准星都有独立的样式、X/Y 坐标位置和快捷键；切换准星时会保留各自的位置。");
             ui.add_space(6.0);
 
-            let count = self.local.crosshairs.len();
-            for i in 0..count {
-                let slot = self.local.crosshairs[i].clone();
+            let slots = self.local.crosshairs.clone();
+            let count = slots.len();
+            for (i, slot) in slots.into_iter().enumerate() {
                 let is_active = i == active_idx;
                 let target = ListenTarget::Crosshair(i);
                 let listening = self.listening.as_ref() == Some(&target);
@@ -131,6 +131,8 @@ impl App {
                 } else {
                     (Color32::TRANSPARENT, Stroke::new(1.0, pal().border))
                 };
+                let mut switch_left = None;
+                let mut switch_right = None;
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(stroke)
@@ -179,7 +181,7 @@ impl App {
                                                         .on_hover_text("点击切换到该准星")
                                                         .clicked()
                                                     {
-                                                        switch_to = Some(i);
+                                                        switch_left = Some(i);
                                                     }
                                                     if icon_button(
                                                         ui,
@@ -248,8 +250,10 @@ impl App {
                                     if slot.hotkey.vk != 0
                                         && ghost(ui, icon::X).on_hover_text("清除快捷键").clicked()
                                     {
-                                        hotkey_actions
-                                            .push((target.clone(), Some(Default::default())));
+                                        hotkey_actions.push((
+                                            target.clone(),
+                                            Some(crate::config::Hotkey::default()),
+                                        ));
                                     }
                                     if let Some(why) = issue {
                                         ui.label(
@@ -295,11 +299,14 @@ impl App {
                                     )
                                     .clicked()
                                     {
-                                        switch_to = Some(i);
+                                        switch_right = Some(i);
                                     }
                                 },
                             );
                     });
+                if let Some(idx) = switch_left.or(switch_right) {
+                    switch_to = Some(idx);
+                }
                 if i + 1 < count {
                     ui.add_space(6.0);
                 }
