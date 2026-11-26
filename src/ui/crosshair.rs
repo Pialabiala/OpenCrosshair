@@ -120,6 +120,9 @@ impl App {
             for i in 0..count {
                 let slot = self.local.crosshairs[i].clone();
                 let is_active = i == active_idx;
+                let target = ListenTarget::Crosshair(i);
+                let listening = self.listening.as_ref() == Some(&target);
+                let issue = self.hotkey_issue(&target, slot.hotkey);
                 let t = texture(
                     &mut self.textures,
                     ui.ctx(),
@@ -245,9 +248,6 @@ impl App {
                                         }
                                     }
 
-                                    let target = ListenTarget::Crosshair(i);
-                                    let listening = self.listening.as_ref() == Some(&target);
-                                    let issue = self.hotkey_issue(&target, slot.hotkey);
                                     if slot.hotkey.vk != 0
                                         && ghost(ui, icon::X).on_hover_text("清除快捷键").clicked()
                                     {

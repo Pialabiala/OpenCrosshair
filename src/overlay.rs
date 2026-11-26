@@ -234,12 +234,15 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
                             crate::ui::repaint();
                         }
                         id if id >= HK_PRESET_BASE => {
-                            if let Some((_, preset_name)) =
-                                st.preset_bindings.iter().find(|(bid, _)| *bid == id)
-                            {
+                            let preset_name = st
+                                .preset_bindings
+                                .iter()
+                                .find(|(bid, _)| *bid == id)
+                                .map(|(_, name)| name.clone());
+                            if let Some(preset_name) = preset_name {
                                 let loaded = {
                                     let mut s = settings.lock().unwrap();
-                                    if let Some(preset) = s.presets.get(preset_name).cloned() {
+                                    if let Some(preset) = s.presets.get(&preset_name).cloned() {
                                         *s.active_crosshair_mut() = preset;
                                         s.sync_active();
                                         s.save();
@@ -878,7 +881,7 @@ unsafe fn tray_menu(h: HWND) {
                         menu,
                         MF_STRING | flag,
                         CROSSHAIR_BASE + i,
-                        &HSTRING::from(&slot.name),
+                        &HSTRING::from(slot.name.as_str()),
                     );
                 }
             }
