@@ -871,11 +871,7 @@ impl App {
                 pal().yellow,
                 format!("{}：看不到准星？请改用无边框窗口。", game_name(&exe)),
             ),
-            Status::Waiting => (
-                "等待中",
-                pal().gray,
-                "当你的游戏窗口处于前台时自动显示".to_string(),
-            ),
+            Status::Waiting => ("等待中", pal().gray, "当你的游戏窗口处于前台时自动显示".to_string()),
             // With no toggle key there's nothing to press, so point at the switch instead.
             Status::Hidden => (
                 "已隐藏",
@@ -886,11 +882,7 @@ impl App {
                     format!("按 {toggle} 显示准星")
                 },
             ),
-            Status::Everywhere => (
-                "全局显示",
-                pal().blue,
-                "当前在所有窗口上方显示".to_string(),
-            ),
+            Status::Everywhere => ("全局显示", pal().blue, "当前在所有窗口上方显示".to_string()),
         };
         // Switch first, left to right: a right_to_left layout (or egui::Sides) inside the
         // bottom_up column leaves the whole window unpainted.

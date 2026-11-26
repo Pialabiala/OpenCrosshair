@@ -668,26 +668,17 @@ mod tests {
 
         let second = s.add_crosshair(Mode::Image);
         assert_eq!(second, 1);
-        assert_eq!(
-            (s.active_crosshair().offset_x, s.active_crosshair().offset_y),
-            (0, 0)
-        );
+        assert_eq!((s.active_crosshair().offset_x, s.active_crosshair().offset_y), (0, 0));
         s.active_crosshair_mut().offset_x = -80;
         s.active_crosshair_mut().offset_y = 60;
         s.sync_active();
 
         assert_eq!(
-            (
-                s.crosshairs[0].crosshair.offset_x,
-                s.crosshairs[0].crosshair.offset_y
-            ),
+            (s.crosshairs[0].crosshair.offset_x, s.crosshairs[0].crosshair.offset_y),
             (120, -45)
         );
         assert_eq!(
-            (
-                s.crosshairs[1].crosshair.offset_x,
-                s.crosshairs[1].crosshair.offset_y
-            ),
+            (s.crosshairs[1].crosshair.offset_x, s.crosshairs[1].crosshair.offset_y),
             (-80, 60)
         );
     }

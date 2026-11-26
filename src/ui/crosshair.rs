@@ -110,10 +110,7 @@ impl App {
                     }
                 },
             );
-            hint(
-                ui,
-                "每个准星都有独立的样式、X/Y 坐标位置和快捷键；切换准星时会保留各自的位置。",
-            );
+            hint(ui, "每个准星都有独立的样式、X/Y 坐标位置和快捷键；切换准星时会保留各自的位置。");
             ui.add_space(6.0);
 
             let count = self.local.crosshairs.len();
@@ -394,10 +391,7 @@ impl App {
                     (c.offset_x, c.offset_y) = (0, 0);
                 }
             });
-            hint(
-                ui,
-                format!("仅调整「{active_name}」的屏幕位置偏移，不影响其他独立准星。"),
-            );
+            hint(ui, format!("仅调整「{active_name}」的屏幕位置偏移，不影响其他独立准星。"));
         });
     }
 
@@ -459,10 +453,7 @@ impl App {
                 };
                 ui.label(RichText::new(current).color(pal().muted));
             });
-            hint(
-                ui,
-                "或直接将图片拖入此窗口，推荐使用透明背景的 PNG 图片。",
-            );
+            hint(ui, "或直接将图片拖入此窗口，推荐使用透明背景的 PNG 图片。");
             if let Some(e) = &self.image_error {
                 ui.label(
                     RichText::new(format!("{}  {e}", icon::WARNING))
@@ -534,16 +525,8 @@ impl App {
                 // a narrow window.
                 row(ui, "", |ui| {
                     ui.horizontal(|ui| {
-                        toggle(
-                            ui,
-                            &mut mirror_x,
-                            &format!("{} 水平镜像", icon::FLIP_HORIZONTAL),
-                        );
-                        toggle(
-                            ui,
-                            &mut mirror_y,
-                            &format!("{} 垂直镜像", icon::FLIP_VERTICAL),
-                        );
+                        toggle(ui, &mut mirror_x, &format!("{} 水平镜像", icon::FLIP_HORIZONTAL));
+                        toggle(ui, &mut mirror_y, &format!("{} 垂直镜像", icon::FLIP_VERTICAL));
                     });
                 });
                 row(ui, "", |ui| {

@@ -83,10 +83,7 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
         });
     if rule.action == Aim::Keep {
         ui.add_space(4.0);
-        hint(
-            ui,
-            "在上方选择“隐藏准星”、“仅在瞄准时显示”或某个预设后，即可配置瞄准按键与切换模式。",
-        );
+        hint(ui, "在上方选择“隐藏准星”、“仅在瞄准时显示”或某个预设后，即可配置瞄准按键与切换模式。");
     }
 }
 
@@ -485,14 +482,8 @@ impl App {
             let mut rule = default_rule.clone();
             aim_controls(ui, "default", &preset_names, &mut rule);
             (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
-            hint(
-                ui,
-                "适用于开镜瞄准类游戏：仅轮询按键状态，不会向游戏注入任何输入钩子。",
-            );
-            hint(
-                ui,
-                "此项为所有游戏的默认规则；如需为单个游戏单独配置，请点击「我的游戏」对应行中的“默认开镜”。",
-            );
+            hint(ui, "适用于开镜瞄准类游戏：仅轮询按键状态，不会向游戏注入任何输入钩子。");
+            hint(ui, "此项为所有游戏的默认规则；如需为单个游戏单独配置，请点击「我的游戏」对应行中的“默认开镜”。");
         });
     }
 }

@@ -10,11 +10,7 @@ use std::collections::BTreeMap;
 
 impl App {
     pub(super) fn presets_page(&mut self, ui: &mut egui::Ui) {
-        heading(
-            ui,
-            "预设",
-            "保存准星配置并在它们之间快速切换，每个游戏也可指定专属预设。",
-        );
+        heading(ui, "预设", "保存准星配置并在它们之间快速切换，每个游戏也可指定专属预设。");
         card(ui, "保存当前准星", |ui| {
             ui.horizontal(|ui| {
                 let active = self.local.active_crosshair().clone();

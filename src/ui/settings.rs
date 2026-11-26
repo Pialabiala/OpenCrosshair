@@ -135,13 +135,7 @@ impl App {
             }
 
             ui.add_space(6.0);
-            hint(
-                ui,
-                format!(
-                    "{}  点击按键框后按下任意按键或组合键即可绑定，按 Esc 取消。",
-                    icon::KEYBOARD
-                ),
-            );
+            hint(ui, format!("{}  点击按键框后按下任意按键或组合键即可绑定，按 Esc 取消。", icon::KEYBOARD));
         });
         card(ui, "开机启动", |ui| {
             ui.horizontal(|ui| {
@@ -165,13 +159,7 @@ impl App {
                     overlay::key_name(self.local.menu_key)
                 )
             };
-            hint(
-                ui,
-                format!(
-                    "{}  开机后在系统托盘静默运行。{how}",
-                    icon::ROCKET_LAUNCH
-                ),
-            );
+            hint(ui, format!("{}  开机后在系统托盘静默运行。{how}", icon::ROCKET_LAUNCH));
         });
         card(ui, "更新", |ui| {
             ui.horizontal(|ui| {
@@ -207,10 +195,7 @@ impl App {
                 }
                 hint(ui, text);
             });
-            hint(
-                ui,
-                "更新来自项目的 GitHub Releases，游玩期间绝不会强制重启。",
-            );
+            hint(ui, "更新来自项目的 GitHub Releases，游玩期间绝不会强制重启。");
         });
         card(ui, "关于", |ui| {
             let repo = env!("CARGO_PKG_REPOSITORY");

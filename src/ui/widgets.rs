@@ -208,12 +208,7 @@ pub(super) fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
         response.mark_changed();
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::Checkbox,
-            ui.is_enabled(),
-            *on,
-            "显示准星",
-        )
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "显示准星")
     });
 
     if ui.is_rect_visible(rect) {

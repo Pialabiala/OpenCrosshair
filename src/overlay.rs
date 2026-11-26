@@ -499,13 +499,8 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             }
             seen.push(hk);
             let ok = unsafe {
-                RegisterHotKey(
-                    Some(hwnd),
-                    id,
-                    HOT_KEY_MODIFIERS(hk.mods) | MOD_NOREPEAT,
-                    hk.vk,
-                )
-                .is_ok()
+                RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(hk.mods) | MOD_NOREPEAT, hk.vk)
+                    .is_ok()
             };
             if !ok {
                 failed.push(hk);

@@ -142,10 +142,7 @@ fn latest_tag() -> Result<Option<String>, String> {
             return Err("GitHub 限制了当前网络的请求频率，10 分钟后重试。".into());
         }
         None => {
-            return Err(format!(
-                "GitHub 返回异常状态（HTTP {}），10 分钟后重试。",
-                probe.status
-            ));
+            return Err(format!("GitHub 返回异常状态（HTTP {}），10 分钟后重试。", probe.status));
         }
     };
     // No tag in the redirect means it went to a non-release page: still no release.

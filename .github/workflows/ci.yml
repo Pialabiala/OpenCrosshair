@@ -15,7 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
@@ -30,3 +29,4 @@ jobs:
           path: |
             OpenCrosshair.exe
             OpenCrosshair-Setup.exe
+      - run: cargo fmt --check

@@ -202,10 +202,7 @@ pub fn install(silent: bool) {
     let copied = std::fs::create_dir_all(&dir)
         .and_then(|_| std::fs::copy(std::env::current_exe()?, &target));
     if let Err(e) = copied {
-        return tell(
-            &format!("无法将 OpenCrosshair 复制到 {}：\n{e}", dir.display()),
-            true,
-        );
+        return tell(&format!("无法将 OpenCrosshair 复制到 {}：\n{e}", dir.display()), true);
     }
     if let Some(link) = start_menu_link() {
         let _ = create_shortcut(&link, &target);
